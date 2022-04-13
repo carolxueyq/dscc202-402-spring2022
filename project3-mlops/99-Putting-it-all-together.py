@@ -66,6 +66,7 @@ display(airbnbDF)
 # COMMAND ----------
 
 # TODO
+airbnbDF['price'] = airbnbDF['price'].apply(lambda x: x.replace("$","").replace(",","")).astype(float)
 
 # COMMAND ----------
 
@@ -76,7 +77,52 @@ display(airbnbDF)
 
 # COMMAND ----------
 
+airbnbDF.isna().sum()
+
+# COMMAND ----------
+
 # TODO
+airbnbDF.info()
+
+# COMMAND ----------
+
+airbnbDF.columns.tolist()
+
+# COMMAND ----------
+
+import seaborn as sns
+import matplotlib.pyplot as plt
+ 
+plt.figure(figsize=(18,15))
+sns.heatmap(airbnbDF.corr(),cmap = "coolwarm", annot=True,fmt=".2%")
+plt.show()
+
+# COMMAND ----------
+
+# Based on the above heatmap, I decided to remove the numerical variables that are not that highly correlated(under 10%) to the price, such as longtitude. For categorical variables, remove zipcode since there are 30 null values and create dummies for other variables. 
+
+airbnbcopy = airbnbDF
+
+columns = ['host_is_superhost',
+ 'cancellation_policy',
+ 'instant_bookable',
+ 'latitude',
+ 'property_type',
+ 'room_type',
+ 'accommodates',
+ 'bathrooms',
+ 'bedrooms',
+ 'beds',
+ 'bed_type',
+ 'number_of_reviews',
+ 'review_scores_rating',
+ 'price']
+
+airbnbcopy = airbnbcopy.loc[:,airbnbcopy.columns.isin(columns)]
+
+# COMMAND ----------
+
+airbnbcopy.shape
 
 # COMMAND ----------
 
@@ -87,6 +133,44 @@ display(airbnbDF)
 # COMMAND ----------
 
 # TODO
+# Encode dummy variables
+dummies1 = pd.get_dummies(airbnbcopy['host_is_superhost']).rename(columns=lambda x: 'host_is_superhost_' + str(x))
+dummies2 = pd.get_dummies(airbnbcopy['cancellation_policy']).rename(columns=lambda x: 'cancellation_policy_' + str(x))
+dummies3 = pd.get_dummies(airbnbcopy['instant_bookable']).rename(columns=lambda x: 'instant_bookable_' + str(x))
+dummies4 = pd.get_dummies(airbnbcopy['property_type']).rename(columns=lambda x: 'property_type_' + str(x))
+dummies5 = pd.get_dummies(airbnbcopy['room_type']).rename(columns=lambda x: 'room_type_' + str(x))
+dummies6 = pd.get_dummies(airbnbcopy['bed_type']).rename(columns=lambda x: 'bed_type_' + str(x))
+
+# COMMAND ----------
+
+df = pd.concat([airbnbcopy, dummies1,dummies2,dummies3,dummies4,dummies5,dummies6], axis=1)
+
+# COMMAND ----------
+
+# Plot the heatmap again for checking the correlation among dummies and price
+plt.figure(figsize=(18,15))
+sns.heatmap(df.corr(),cmap = "coolwarm", annot=False)
+plt.show()
+
+# COMMAND ----------
+
+#filter independent variables again!! Only keep the dummies for room type
+
+c = ['accommodates',
+ 'bathrooms',
+ 'bedrooms',
+ 'beds',
+ 'number_of_reviews',
+ 'review_scores_rating',
+ 'price',
+ 'room_type_Entire home/apt',
+ 'room_type_Private room',
+ 'room_type_Shared room']
+df = df.loc[:,df.columns.isin(c)]
+
+# COMMAND ----------
+
+df=df.fillna(df.mean())
 
 # COMMAND ----------
 
@@ -99,7 +183,14 @@ display(airbnbDF)
 
 # TODO
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+X = df.drop("price", axis=1)
+y = df['price']
 
+min_max_scaler = MinMaxScaler()
+X = min_max_scaler.fit_transform(X)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=22)
 
 # COMMAND ----------
 
@@ -118,7 +209,44 @@ from sklearn.model_selection import train_test_split
 
 # COMMAND ----------
 
+# Linear Regression
+
+# COMMAND ----------
+
 # TODO
+from sklearn.linear_model import LinearRegression
+reg = LinearRegression().fit(X_train, y_train)
+
+# COMMAND ----------
+
+import numpy as np
+y_pred = reg.predict(X_test)
+from sklearn import metrics
+metrics.mean_squared_error(y_test, y_pred)
+
+# COMMAND ----------
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
+# TODO
+ 
+## RANDOM FOREST
+ 
+# Initializing my pipeline
+estimators = [('model', RandomForestRegressor())]
+ 
+pipe = Pipeline(estimators)
+ 
+# These are the hyperparamaters and models I want to tune
+param_grid = [{'model': [RandomForestRegressor()], 
+               'model__n_estimators': [*range(50,300,50)]}, 
+              'model__max_depth': [50,150,300,None]
+              ]
+ 
+# 5 fold cross validation
+grid = GridSearchCV(pipe, param_grid, cv = 5, verbose = 3)
+fitted_grid = grid.fit(X_train, y_train)
 
 # COMMAND ----------
 
