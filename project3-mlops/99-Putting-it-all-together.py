@@ -170,7 +170,7 @@ df = df.loc[:,df.columns.isin(c)]
 
 # COMMAND ----------
 
-df=df.fillna(df.mean())
+df=df.fillna(df.median())
 
 # COMMAND ----------
 
@@ -187,8 +187,8 @@ from sklearn.preprocessing import MinMaxScaler
 X = df.drop("price", axis=1)
 y = df['price']
 
-min_max_scaler = MinMaxScaler()
-X = min_max_scaler.fit_transform(X)
+# min_max_scaler = MinMaxScaler()
+# X = min_max_scaler.fit_transform(X)
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=22)
 
@@ -209,7 +209,8 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 
 # COMMAND ----------
 
-# Linear Regression
+# MAGIC %md
+# MAGIC ### Linear Regression
 
 # COMMAND ----------
 
@@ -219,10 +220,8 @@ reg = LinearRegression().fit(X_train, y_train)
 
 # COMMAND ----------
 
-import numpy as np
-y_pred = reg.predict(X_test)
-from sklearn import metrics
-metrics.mean_squared_error(y_test, y_pred)
+# MAGIC %md
+# MAGIC ### Random Forest
 
 # COMMAND ----------
 
@@ -239,14 +238,40 @@ estimators = [('model', RandomForestRegressor())]
 pipe = Pipeline(estimators)
  
 # These are the hyperparamaters and models I want to tune
-param_grid = [{'model': [RandomForestRegressor()], 
-               'model__n_estimators': [*range(50,300,50)]}, 
-              'model__max_depth': [50,150,300,None]
-              ]
+param_grid = {'model': [RandomForestRegressor()], 
+               'model__n_estimators': [*range(50,200,50)], 
+              'model__max_depth': [50,150,300,None]}
  
 # 5 fold cross validation
-grid = GridSearchCV(pipe, param_grid, cv = 5, verbose = 3)
+grid = GridSearchCV(pipe, param_grid, cv = 3, verbose = 3)
 fitted_grid = grid.fit(X_train, y_train)
+
+# COMMAND ----------
+
+results = pd.DataFrame(fitted_grid.cv_results_).sort_values('mean_test_score', ascending = False)
+results
+
+# COMMAND ----------
+
+model = fitted_grid.best_estimator_[0]
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Gradient Boosting
+
+# COMMAND ----------
+
+from sklearn import ensemble
+
+params = {
+    "n_estimators": 500,
+    "max_depth": 5,
+    "min_samples_split": 200,
+    "learning_rate": 0.02
+}
+GB = ensemble.GradientBoostingRegressor(**params)
+GB.fit(X_train, y_train)
 
 # COMMAND ----------
 
@@ -256,6 +281,25 @@ fitted_grid = grid.fit(X_train, y_train)
 # COMMAND ----------
 
 # TODO
+# MSE for linear regression
+import numpy as np
+from sklearn import metrics
+y_pred = reg.predict(X_test)
+metrics.mean_squared_error(y_test, y_pred)
+
+# COMMAND ----------
+
+# TODO
+# MSE for RF
+y_pred1 = model.predict(X_test)
+metrics.mean_squared_error(y_test, y_pred1)
+
+# COMMAND ----------
+
+# TODO
+# MSE for GB
+y_pred2 = GB.predict(X_test)
+metrics.mean_squared_error(y_test, y_pred2)
 
 # COMMAND ----------
 
@@ -267,7 +311,153 @@ fitted_grid = grid.fit(X_train, y_train)
 
 # TODO
 import mlflow.sklearn
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.linear_model import LinearRegression
 
+# RF
+def mlflow_rf(df, n_estimators, max_depth):
+    
+ with mlflow.start_run(run_name="Random Forest") as run:
+   X_train, X_test, y_train, y_test = train_test_split(df.drop(["price"], axis=1), df[["price"]].values.ravel(), test_size=0.2, random_state=22)
+   rf = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth)
+   rf.fit(X_train, y_train)
+   predictions = rf.predict(X_test)
+
+   # Log model
+   mlflow.sklearn.log_model(rf, "random-forest-model")
+
+   # Log params
+   mlflow.log_param("n_estimators", n_estimators)
+   mlflow.log_param("max_depth", max_depth)
+
+   # Log metrics
+   mlflow.log_metric("mse", mean_squared_error(y_test, predictions))
+   mlflow.log_metric("mae", mean_absolute_error(y_test, predictions))  
+   runID = run.info.run_uuid
+   experimentID = run.info.experiment_id
+   print(f"RF model with run_id `{runID}` and experiment_id `{experimentID}`, having mse of '{mean_squared_error(y_test, predictions)}'")
+
+# LR
+def mlflow_lr(df):
+    
+ with mlflow.start_run(run_name="Linear Regression") as run:
+   X_train, X_test, y_train, y_test = train_test_split(df.drop(["price"], axis=1), df[["price"]].values.ravel(), test_size=0.2, random_state=22)
+   lr = LinearRegression()
+   lr.fit(X_train, y_train)
+   predictions = lr.predict(X_test)
+
+   # Log model
+   mlflow.sklearn.log_model(lr, "linear regression")
+
+   # Log metrics
+   mlflow.log_metric("mse", mean_squared_error(y_test, predictions))
+   mlflow.log_metric("mae", mean_absolute_error(y_test, predictions)) 
+
+   runID = run.info.run_uuid
+   experimentID = run.info.experiment_id
+   print(f"LR model with run_id `{runID}` and experiment_id `{experimentID}`, having mse of '{mean_squared_error(y_test, predictions)}'")
+   return(runID)
+
+# GB
+def mlflow_gb(df,n_estimators,max_depth,split,rate):
+    
+ with mlflow.start_run(run_name="Gradient Boosting") as run:
+    
+   X_train, X_test, y_train, y_test = train_test_split(df.drop(["price"], axis=1), df[["price"]].values.ravel(), test_size=0.2, random_state=22)
+   params = {
+   "n_estimators": n_estimators,
+   "max_depth": max_depth,
+   "min_samples_split": split,
+   "learning_rate": rate}
+    
+   gb = ensemble.GradientBoostingRegressor(**params)
+   gb.fit(X_train, y_train)
+   predictions = gb.predict(X_test)
+    
+   # Log model
+   mlflow.sklearn.log_model(gb, "Gradient Boosting")
+
+   # Log params
+   mlflow.log_param("n_estimators", n_estimators)
+   mlflow.log_param("max_depth", max_depth)
+   mlflow.log_param("learning_rate", rate)
+
+   # Log metrics
+   mlflow.log_metric("mse", mean_squared_error(y_test, predictions))
+   mlflow.log_metric("mae", mean_absolute_error(y_test, predictions))
+
+   runID = run.info.run_uuid
+   experimentID = run.info.experiment_id
+   print(f"GB model with run_id `{runID}` and experiment_id `{experimentID}`, having mse of '{mean_squared_error(y_test, predictions)}'")
+   return(runID)
+
+import tensorflow as tf
+tf.random.set_seed(22)
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+
+
+def mlflow_nn(df,unit1,input_dim,unit2):
+    
+ with mlflow.start_run(run_name="Gradient Boosting") as run:
+    
+   X_train, X_test, y_train, y_test = train_test_split(df.drop(["price"], axis=1), df[["price"]].values.ravel(), test_size=0.2, random_state=22)
+   nn = Sequential([
+   Dense(unit1, input_dim=input_dim, activation='relu'),
+   Dense(unit2, activation='relu'),
+   Dense(1, activation='linear')])
+    
+   nn.compile(optimizer="adam", loss="mse")
+   nn.fit(X_train, y_train, epochs=100, verbose=0)
+   predictions = nn.predict(X_test)
+    
+   # Log model
+   mlflow.sklearn.log_model(nn, "Neural Network")
+
+   # Log metrics
+   mlflow.log_metric("mse", mean_squared_error(y_test, predictions))
+   mlflow.log_metric("mae", mean_absolute_error(y_test, predictions))
+
+   runID = run.info.run_uuid
+   experimentID = run.info.experiment_id
+   print(f"NN model with run_id `{runID}` and experiment_id `{experimentID}`, having mse of '{mean_squared_error(y_test, predictions)}'")
+   return(runID)
+
+
+
+# COMMAND ----------
+
+# rf1
+mlflow_rf(df, 100, 50)
+#rf2
+mlflow_rf(df, 50, 50)
+#rf3
+mlflow_rf(df, 150, 100)
+
+#lr
+mlflow_lr(df)
+
+#gb1
+mlflow_gb(df,500,5,200,0.02)
+#gb2
+mlflow_gb(df,400,5,100,0.01)
+#gb3
+mlflow_gb(df,300,5,200,0.01)
+#gb4
+mlflow_gb(df,500,3,200,0.01)
+#gb5
+mlflow_gb(df,500,3,200,0.02)
+
+# COMMAND ----------
+
+#gb6
+mlflow_gb(df,500,3,100,0.02)
+#gb7
+mlflow_gb(df,500,3,100,0.01)
+
+# COMMAND ----------
+
+# GB model with run_id `a5aad5beef5441ff8c74cd7fce67acea` and experiment_id `3805545008156378`, having mse of '22540.361541607865'
 
 # COMMAND ----------
 
@@ -285,6 +475,13 @@ import mlflow.sklearn
 
 # TODO
 import mlflow.pyfunc
+
+gb_pyfunc_model = mlflow.pyfunc.load_model(model_uri='runs:/a5aad5beef5441ff8c74cd7fce67acea/Gradient Boosting')
+type(gb_pyfunc_model)
+
+# COMMAND ----------
+
+gb_pyfunc_model.predict(X_test)
 
 # COMMAND ----------
 
@@ -309,9 +506,9 @@ class Airbnb_Model(mlflow.pyfunc.PythonModel):
     def __init__(self, model):
         self.model = model
     
-    def predict(self, context, model_input):
-        # FILL_IN
-
+    def predict(self, context, X_test):
+        y_pred = self.model.predict(X_test)
+        return y_pred
 
 # COMMAND ----------
 
@@ -320,10 +517,19 @@ class Airbnb_Model(mlflow.pyfunc.PythonModel):
 
 # COMMAND ----------
 
-# TODO
-final_model_path =  f"{working_path}/final-model"
+X_train, X_test, y_train, y_test = train_test_split(df.drop(["price"], axis=1), df[["price"]].values.ravel(), test_size=0.2, random_state=22)
 
-# FILL_IN
+# COMMAND ----------
+
+# TODO
+
+from mlflow.exceptions import MlflowException
+final_model_path =  f"{working_path}/final-model-1"
+gb_model = Airbnb_Model(model = gb_pyfunc_model)
+
+dbutils.fs.rm(final_model_path, True) # Allows you to rerun the code multiple times
+
+mlflow.pyfunc.save_model(path=final_model_path.replace("dbfs:", "/dbfs"), python_model=gb_model)
 
 # COMMAND ----------
 
@@ -333,6 +539,12 @@ final_model_path =  f"{working_path}/final-model"
 # COMMAND ----------
 
 # TODO
+loaded_model = mlflow.pyfunc.load_model(final_model_path)
+import pandas as pd
+
+model_output = loaded_model.predict(X_test)
+
+model_output
 
 # COMMAND ----------
 
@@ -351,11 +563,17 @@ final_model_path =  f"{working_path}/final-model"
 # COMMAND ----------
 
 # TODO
-save the testing data 
-test_data_path = f"{working_path}/test_data.csv"
-# FILL_IN
+test_data = pd.DataFrame(X_test)
+test_data['price'] = y_test
 
+
+# save the testing data 
+test_data_path = f"{working_path}/test_data.csv"
+test_data.to_csv(test_data_path, index = False)
+ 
 prediction_path = f"{working_path}/predictions.csv"
+y_pred = pd.Series(model_output)
+y_pred.to_csv(prediction_path, index = False)
 
 # COMMAND ----------
 
@@ -363,6 +581,19 @@ prediction_path = f"{working_path}/predictions.csv"
 # MAGIC First we will determine what the project script should do. Fill out the `model_predict` function to load out the trained model you just saved (at `final_model_path`) and make price per person predictions on the data at `test_data_path`. Then those predictions should be saved under `prediction_path` for the user to access later.
 # MAGIC 
 # MAGIC Run the cell to check that your function is behaving correctly and that you have predictions saved at `demo_prediction_path`.
+
+# COMMAND ----------
+
+def model_predict(final_model_path, test_data_path, prediction_path):
+    model = mlflow.pyfunc.load_model(final_model_path)
+    X_test = pd.read_csv(test_data_path).iloc[:,0:9]
+    prediction = model.predict(X_test)
+    prediction = pd.Series(prediction)
+    return prediction
+
+# COMMAND ----------
+
+model_predict(final_model_path, test_data_path, prediction_path)
 
 # COMMAND ----------
 
@@ -376,8 +607,12 @@ import pandas as pd
 @click.option("--test_data_path", default="", type=str)
 @click.option("--prediction_path", default="", type=str)
 def model_predict(final_model_path, test_data_path, prediction_path):
-    # FILL_IN
-
+    model = mlflow.pyfunc.load_model(final_model_path)
+    X_test = pd.read_csv(test_data_path).iloc[:,0:9]
+    prediction = model.predict(X_test)
+    prediction = pd.Series(prediction)
+    prediction.to_csv(prediction_path, index = False)
+    
 
 # test model_predict function    
 demo_prediction_path = f"{working_path}/predictions.csv"
@@ -408,9 +643,11 @@ conda_env: conda.yaml
 
 entry_points:
   main:
-    parameters:
-      #FILL_IN
-    command:  "python predict.py #FILL_IN"
+    parameters: 
+      final_model_path: {type: str, default: "/dbfs/mnt/training/airbnb/sf-listings/airbnb-cleaned-mlflow.csv"}
+      test_data_path: {type: str, default: "/dbfs/mnt/training/airbnb/sf-listings/airbnb-cleaned-mlflow.csv"}
+      prediction_path: {type: str, default: "/dbfs/mnt/training/airbnb/sf-listings/airbnb-cleaned-mlflow.csv"}
+    command:  "python predict.py --final_model_path {final_model_path} --test_data_path {test_data_path} --prediction_path {prediction_path}"
 '''.strip(), overwrite=True)
 
 # COMMAND ----------
@@ -464,10 +701,15 @@ import click
 import mlflow.pyfunc
 import pandas as pd
 
-# put model_predict function with decorators here
+def model_predict(final_model_path, test_data_path, prediction_path):
+   model = mlflow.pyfunc.load_model(final_model_path)
+   X_test = pd.read_csv(test_data_path).iloc[:,0:9]
+   prediction = model.predict(X_test)
+   prediction = pd.Series(prediction)
+   prediction.to_csv(prediction_path, index = False)
     
 if __name__ == "__main__":
-  model_predict()
+   model_predict()
 
 '''.strip(), overwrite=True)
 
@@ -481,7 +723,7 @@ if __name__ == "__main__":
 
 # COMMAND ----------
 
-display( dbutils.fs.ls(workingDir) )
+display(dbutils.fs.ls(workingDir))
 
 # COMMAND ----------
 
@@ -492,11 +734,36 @@ display( dbutils.fs.ls(workingDir) )
 
 # COMMAND ----------
 
+final_model_path
+
+# COMMAND ----------
+
 # TODO
+df = df
 second_prediction_path = f"{working_path}/predictions-2.csv"
+final_model_path = f"{working_path}/final-model-1"
+test_data_path = f"{working_path}/test_data.csv"
+
 mlflow.projects.run(working_path,
-   # FILL_IN
-)
+  parameters={"final_model_path": final_model_path,
+              "test_data_path": test_data_path,
+              "prediction_path": second_prediction_path})
+
+# COMMAND ----------
+
+def model_predict(final_model_path, test_data_path, prediction_path):
+   model = mlflow.pyfunc.load_model(final_model_path)
+   X_test = pd.read_csv(test_data_path).iloc[:,0:9]
+   prediction = model.predict(X_test)
+   prediction = pd.Series(prediction)
+   prediction.to_csv(prediction_path, index = False)
+
+second_prediction_path = f"{working_path}/predictions-2.csv"
+final_model_path = f"{working_path}/final-model-1/"
+test_data_path = f"{working_path}/test_data.csv"
+
+model_predict(final_model_path, test_data_path, second_prediction_path)
+
 
 # COMMAND ----------
 
