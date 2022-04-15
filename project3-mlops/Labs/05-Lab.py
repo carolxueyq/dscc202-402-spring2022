@@ -94,17 +94,25 @@ rf2 = RandomForestRegressor(n_estimators=100, max_depth=25)
 
 # pre-process train data
 X_train_processed = X_train.copy()
-X_train_processed["trunc_lat"] = #FILL_IN
-X_train_processed["trunc_long"] = #FILL_IN
-X_train_processed["review_scores_sum"] = #FILL_IN
-X_train_processed = X_train_processed.drop(FILL_IN, axis=1)
+X_train_processed["trunc_lat"] = round(X_train_processed["latitude"],2)
+X_train_processed["trunc_long"] = round(X_train_processed["longitude"],2)
+column_names = ["review_scores_accuracy","review_scores_cleanliness","review_scores_checkin","review_scores_communication","review_scores_location", "review_scores_value"]
+X_train_processed["review_scores_sum"] = X_train_processed[column_names].sum(axis=1)
+X_train_processed = X_train_processed.drop(["review_scores_accuracy","review_scores_cleanliness",
+                                         "review_scores_checkin","review_scores_communication",
+                                         "review_scores_location", "review_scores_value",
+                                         "latitude", "longitude"], axis=1)
+
 
 # pre-process test data to obtain MSE
 X_test_processed = X_test.copy()
-X_test_processed["trunc_lat"] = #FILL_IN
-X_test_processed["trunc_long"] = #FILL_IN
-X_test_processed["review_scores_sum"] = #FILL_IN
-X_test_processed = X_test_processed.drop(FILL_IN, axis=1)
+X_test_processed["trunc_lat"] = round(X_test_processed["latitude"],2)
+X_test_processed["trunc_long"] = round(X_test_processed["longitude"],2)
+X_test_processed["review_scores_sum"] = X_test_processed[column_names].sum(axis=1)
+X_test_processed = X_test_processed.drop(["review_scores_accuracy","review_scores_cleanliness",
+                                         "review_scores_checkin","review_scores_communication",
+                                         "review_scores_location", "review_scores_value",
+                                         "latitude", "longitude"], axis=1)
 
 
 # fit and evaluate new rf model
@@ -147,6 +155,10 @@ rf2_pyfunc_model = mlflow.pyfunc.load_pyfunc(rf2_path.replace("dbfs:", "/dbfs"))
 
 # COMMAND ----------
 
+#Outdated MLflow client: Artifacts stored in 'dbfs:/databricks/mlflow-tracking' can only be accessed using MLflow client version 1.9.1 or later. Please update your MLflow client and try again.
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC Let's try giving our new `rf2_pyfunc_model` the `X_test` DataFrame to generate predictions off of.
 
@@ -161,6 +173,10 @@ except ValueError as e:
 
 # MAGIC %md
 # MAGIC Why did this fail?
+
+# COMMAND ----------
+
+#Outdated MLflow client: Artifacts stored in 'dbfs:/databricks/mlflow-tracking' can only be accessed using MLflow client version 1.9.1 or later. Please update your MLflow client and try again.
 
 # COMMAND ----------
 
@@ -186,8 +202,15 @@ class RF_with_preprocess(mlflow.pyfunc.PythonModel):
 
     def preprocess_input(self, model_input):
         '''return pre-processed model_input'''
-        # FILL_IN
-        return
+        model_input = model_input.copy()
+        model_input["trunc_lat"] = round(model_input["latitude"],2)
+        model_input["trunc_long"] = round(model_input["longitude"],2)
+        model_input["review_scores_sum"] = model_input[column_names].sum(axis=1)
+        model_input = model_input.drop(["review_scores_accuracy","review_scores_cleanliness",
+                                         "review_scores_checkin","review_scores_communication",
+                                         "review_scores_location", "review_scores_value",
+                                         "latitude", "longitude"], axis=1)
+        return model_input
     
     def predict(self, context, model_input):
         processed_model_input = self.preprocess_input(model_input.copy())
@@ -208,7 +231,7 @@ rf_preprocess_model = RF_with_preprocess(trained_rf = rf2)
 mlflow.pyfunc.save_model(path=model_path.replace("dbfs:", "/dbfs"), python_model=rf_preprocess_model)
 
 # Load the model in `python_function` format
-loaded_preprocess_model = mlflow.pyfunc.load_pyfunc(model_path.replace("dbfs:", "/dbfs"))
+loaded_preprocess_model = mlflow.pyfunc.load_model(model_path.replace("dbfs:", "/dbfs"))
 
 # COMMAND ----------
 
@@ -233,6 +256,7 @@ loaded_preprocess_model.predict(X_test)
 
 # TODO
 # Define the model class
+import numpy as np
 class RF_with_postprocess(mlflow.pyfunc.PythonModel):
 
     def __init__(self, trained_rf):
@@ -240,15 +264,24 @@ class RF_with_postprocess(mlflow.pyfunc.PythonModel):
 
     def preprocess_input(self, model_input):
         '''return pre-processed model_input'''
-        # FILL_IN
-        return 
+        model_input = model_input.copy()
+        model_input["trunc_lat"] = round(model_input["latitude"],2)
+        model_input["trunc_long"] = round(model_input["longitude"],2)
+        model_input["review_scores_sum"] = model_input[column_names].sum(axis=1)
+        model_input = model_input.drop(["review_scores_accuracy","review_scores_cleanliness",
+                                         "review_scores_checkin","review_scores_communication",
+                                         "review_scores_location", "review_scores_value",
+                                         "latitude", "longitude"], axis=1)
+        return model_input
       
     def postprocess_result(self, results):
         '''return post-processed results
         Expensive: predicted price > 100
         Not Expensive: predicted price <= 100'''
-        # FILL_IN
-        return 
+        prediction = pd.DataFrame()
+        prediction["Predicted Price Level"] = results
+        prediction["Predicted Price Level"] = np.where(prediction["Predicted Price Level"] > 100, "Expensive", "Not Expensive")
+        return prediction
     
     def predict(self, context, model_input):
         processed_model_input = self.preprocess_input(model_input.copy())
