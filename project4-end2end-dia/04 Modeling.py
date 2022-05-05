@@ -28,6 +28,13 @@ print(wallet_address,start_date)
 
 # COMMAND ----------
 
+from pyspark.sql.types import *
+from pyspark.sql import functions as F6
+
+# Load the data from the lake
+wallet_balance_df = spark.read.format('delta').load("s3a://dscc202-datasets/songs/triplets")
+songs2tracks_df = spark.read.format('delta').load("s3a://dscc202-datasets/songs/song2tracks")
+metadata_df = spark.read.format('delta').load("s3a://dscc202-datasets/songs/metadata")
 
 
 # COMMAND ----------

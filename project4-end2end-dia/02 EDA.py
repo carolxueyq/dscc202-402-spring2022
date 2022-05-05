@@ -43,7 +43,7 @@
 
 # MAGIC %sql
 # MAGIC select number as MAX_BLOCK_NUMBER,
-# MAGIC from_unixtime(timestamp, "yyyy/MM/dd") as DATE_OF_MAX_BLOCK_NUMBER
+# MAGIC from_unixtime(timestamp, "yyyy/MM/dd HH:MM:SS") as DATE_OF_MAX_BLOCK_NUMBER
 # MAGIC from ethereumetl.blocks
 # MAGIC where number in (select max(number)
 # MAGIC                  from ethereumetl.blocks)
@@ -59,9 +59,8 @@
 # MAGIC SELECT number as BLOCKNUMBER_FIRST_ERC20
 # MAGIC FROM (SELECT number, timestamp
 # MAGIC FROM ethereumetl.blocks 
-# MAGIC INNER JOIN g06_db.erc20_token_transfer 
-# MAGIC ON ethereumetl.blocks.number = g06_db.erc20_token_transfer.block_number 
-# MAGIC WHERE g06_db.erc20_token_transfer.is_erc20 = "True"
+# MAGIC INNER JOIN ethereumetl.token_transfers
+# MAGIC ON ethereumetl.blocks.number = ethereumetl.token_transfers.block_number 
 # MAGIC ORDER BY timestamp ASC
 # MAGIC LIMIT 1)
 
@@ -73,18 +72,9 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT COUNT(is_erc20) as Number_Of_ERC20
+# MAGIC SELECT DISTINCT COUNT(is_erc20) as Number_Of_ERC20
 # MAGIC FROM ethereumetl.silver_contracts
 # MAGIC WHERE is_erc20 = "True"
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT sum(counts) AS DISTINCT_COUNT
-# MAGIC FROM (SELECT count(*) AS counts
-# MAGIC FROM ethereumetl.silver_contracts
-# MAGIC WHERE is_erc20 = "True"
-# MAGIC GROUP BY address)
 
 # COMMAND ----------
 
@@ -111,7 +101,7 @@
 # COMMAND ----------
 
 from pyspark.sql.functions import round 
-perc = n1/n2
+perc =  1 - n1/n2
 print(perc*100,'% of transactions are calls to contracts')
 
 # COMMAND ----------
@@ -149,54 +139,54 @@ display(new)
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC (SELECT count(*)
+# MAGIC  FROM(SELECT count(transaction_hash) AS transfer_count
+# MAGIC       FROM ethereumetl.token_transfers
+# MAGIC       GROUP BY token_address, to_address)) / (SELECT count(*) FROM ethereumetl.token_transfers)
+
+# COMMAND ----------
+
+# OR USE PYTHON
 transferDF1 = spark.sql('select token_address, from_address, to_address, transaction_hash from ethereumetl.token_transfers')
-ERC20 = spark.sql('select * from g06_db.erc20_contract')
+
+# COMMAND ----------
+
+# take a look at the data with 100 rows selected
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT COUNT (to_address) 
-# MAGIC FROM ethereumetl.transactions 
-# MAGIC INNER JOIN ethereumetl.silver_contracts 
-# MAGIC ON ethereumetl.transactions.to_address = ethereumetl.silver_contracts.address
-# MAGIC WHERE ethereumetl.silver_contracts.is_erc20 = "True"
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT *
+# MAGIC SELECT token_address, from_address, to_address, transaction_hash, block_number
 # MAGIC FROM ethereumetl.token_transfers
-# MAGIC INNER JOIN ethereumetl.silver_contracts 
-# MAGIC ON ethereumetl.token_transfers.token_address = ethereumetl.silver_contracts.address
-# MAGIC WHERE ethereumetl.silver_contracts.is_erc20 = "True"
 # MAGIC LIMIT 100
 
 # COMMAND ----------
 
-ERC20_TRANSFER = spark.sql('SELECT * FROM ethereumetl.token_transfers INNER JOIN ethereumetl.silver_contracts ON ethereumetl.token_transfers.token_address = ethereumetl.silver_contracts.address WHERE ethereumetl.silver_contracts.is_erc20 = "True"')
+# group by certain token address and the corresponding to_address and count the transfer
+ERC20_TRANSFER = transferDF1.groupBy("token_address","to_address").agg(count("transaction_hash").alias("transfer_count"))
+# extract those with transfer count of 1 
+ERC20_TRANSFER_new = ERC20_TRANSFER.where(ERC20_TRANSFER.transfer_count == 1)
 
 # COMMAND ----------
 
-ERC20_TRANSFER = ERC20_TRANSFER.groupBy("to_address").agg(count("transaction_hash").alias("transfer_count"))
-ERC20_TRANSFER_new = ERC20_TRANSFER.where(ERC20_TRANSFER.transfer_count ==1)
+spark.conf.set("spark.sql.shuffle.partitions",1000)
+new_count = ERC20_TRANSFER_new.count()
+overall_count = ERC20_TRANSFER.count()
 
 # COMMAND ----------
 
-ERC20_TRANSFER_new.show()
+percents = (new_count/overall_count)*100
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC SELECT COUNT (to_address) 
-# MAGIC FROM ethereumetl.transactions 
+print(percents, '% of ERC-20 transfers are sent to new addresses')
 
 # COMMAND ----------
 
-q6 = transferDF1.groupBy("to_address").agg(count("transaction_hash").alias("transfer_count_for_each_token_address"))
-
-# COMMAND ----------
-
-q6.head(5)
+# MAGIC 
+# MAGIC %md 
+# MAGIC #### - around 60% of ERC-20 transfers are sent to new addresses
 
 # COMMAND ----------
 
@@ -207,7 +197,15 @@ q6.head(5)
 # COMMAND ----------
 
 transactionsDF = spark.sql('select hash, block_number, transaction_index, gas, gas_price from ethereumetl.transactions')
+# sample #48315 block
+sample = transactionDF.where(transactionDF.block_number = 48315)
+sample = sample.sort(sample.transaction_index)
+sample.show()
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### - From the above table, we can find that transactions with higher gas price will be included in a block earlier. In other words, transaction_index integer for the transactions executed in the same block will be larger for those who has lower gas price
 
 # COMMAND ----------
 
@@ -217,8 +215,17 @@ transactionsDF = spark.sql('select hash, block_number, transaction_index, gas, g
 
 # COMMAND ----------
 
+transactionDF = spark.sql('select block_number, hash from ethereumetl.transactions')
+transactionDF = transactionDF.groupBy("block_number").agg(count('hash').alias("Transactions_Count"))
+transactionDF = transactionDF.withColumn("throughput", (transactionDF.Transactions_Count)/15)
+transactionDF = transactionDF.sort(col('throughput').desc())
+transactionDF = transactionDF.select("throughput").limit(1)
+
+# COMMAND ----------
+
 # MAGIC %sql
-# MAGIC -- TBD
+# MAGIC SELECT max(transaction_count) / 15
+# MAGIC FROM ethereumetl.blocks
 
 # COMMAND ----------
 
@@ -229,7 +236,7 @@ transactionsDF = spark.sql('select hash, block_number, transaction_index, gas, g
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT sum(value)/(1x10^18) 
+# MAGIC SELECT sum(value)/(power(10,18))
 # MAGIC AS total_Ether_volume
 # MAGIC FROM ethereumetl.transactions
 
@@ -252,9 +259,8 @@ transactionsDF = spark.sql('select hash, block_number, transaction_index, gas, g
 
 # COMMAND ----------
 
-ERC20_TRANSFER = spark.sql('SELECT * FROM ethereumetl.token_transfers INNER JOIN ethereumetl.silver_contracts ON ethereumetl.token_transfers.token_address = ethereumetl.silver_contracts.address WHERE ethereumetl.silver_contracts.is_erc20 = "True"')
-ERC20_TRANSFER1 = ERC20_TRANSFER.groupBy(ERC20_TRANSFER.token_address).agg(sum("value").alias("TRANSFER_AMOUNT"))
-ERC20_TRANSFER1 = ERC20_TRANSFER1.sort(ERC20_TRANSFER1.TRANSFER_AMOUNT).dsc()
+ERC20_TRANSFER = spark.sql('SELECT * FROM ethereumetl.token_transfers')
+ERC20_TRANSFER1 = ERC20_TRANSFER.sort(ERC20_TRANSFER.value).desc()
 # show the row with the maximum amount of transfers of ERC-20
 ERC20_TRANSFER1.limit(1)
 
@@ -265,8 +271,83 @@ ERC20_TRANSFER1.limit(1)
 
 # COMMAND ----------
 
+# token_address = '0xbe59434473c50021b30686b6d34cdd0b1b4f6198'
+# block_number = 9800410
+# date = 1585935118 OR 2020/04/03 17:04:00
+
+# COMMAND ----------
+
+from pyspark.sql.types import *
+from pyspark.sql import Window
+from pyspark.sql.functions import *
+
+tokens = spark.sql('select address, total_supply from ethereumetl.tokens')
+transfers = spark.sql('select token_address, value, to_address, from_address,block_number from ethereumetl.token_transfers')
+blocks = spark.sql('select number, from_unixtime(timestamp, "yyyy/MM/dd HH:MM:SS") AS Date from ethereumetl.blocks')
+
+# COMMAND ----------
+
+transfers = transfers.where(col("token_address") == '0xbe59434473c50021b30686b6d34cdd0b1b4f6198')
+
+# COMMAND ----------
+
+transfer_from = transfers.groupBy("token_address","from_address").agg(sum("value").alias("send_value"),first("block_number").alias("block1")).withColumn("address",col("from_address"))
+    
+transfer_to = transfers.groupBy("token_address","to_address").agg(sum("value").alias("receive_value"),first("block_number").alias("block2")).withColumn("address",col("to_address"))
+
+# COMMAND ----------
+
+balance = transfer_from.join(transfer_to, ["token_address", "address"], "inner").withColumn("balance", col("receive_value")-col("send_value"))
+
+# COMMAND ----------
+
+balance = balance.select("token_address","balance",'block1')
+balance = balance.join(blocks, blocks.number == balance.block1, "inner")
+
+# COMMAND ----------
+
+display(balance)
+
+# COMMAND ----------
+
+# Extract date from the block of 9800410
+spark.sql('select number, timestamp from ethereumetl.blocks').where(F.col("number") == 9800410).show()
+
+# COMMAND ----------
+
+d = spark.sql('select number, timestamp from ethereumetl.blocks').where(F.col("number") == 9800410)
+
+# COMMAND ----------
+
+d = d.withColumn("Date", F.from_unixtime("timestamp", "yyyy/MM/dd HH:MM:SS"))
+d.show()
+
+# COMMAND ----------
+
+# token_address = '0xbe59434473c50021b30686b6d34cdd0b1b4f6198'
+# block_number = 9800410
+# date = 1585935118
+
+# COMMAND ----------
+
 # MAGIC %sql
-# MAGIC -- TBD
+# MAGIC SELECT token_address, sum(value) AS balance, FIRST(from_unixtime(timestamp, 'yyyy/MM/dd HH:MM:SS')) AS Date
+# MAGIC FROM 
+# MAGIC 
+# MAGIC (SELECT token_address, value,block_number, timestamp, to_address AS address
+# MAGIC FROM ethereumetl.token_transfers
+# MAGIC INNER JOIN ethereumetl.blocks 
+# MAGIC ON ethereumetl.token_transfers.block_number = ethereumetl.blocks.number
+# MAGIC UNION
+# MAGIC SELECT token_address, -value, block_number, timestamp, from_address AS address
+# MAGIC FROM ethereumetl.token_transfers
+# MAGIC INNER JOIN ethereumetl.blocks 
+# MAGIC ON ethereumetl.token_transfers.block_number = ethereumetl.blocks.number)
+# MAGIC 
+# MAGIC WHERE token_address = '0xbe59434473c50021b30686b6d34cdd0b1b4f6198'
+# MAGIC AND timestamp = "1585935118"
+# MAGIC 
+# MAGIC GROUP BY token_address
 
 # COMMAND ----------
 
@@ -275,8 +356,17 @@ ERC20_TRANSFER1.limit(1)
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC -- TBD
+from pyspark.sql.functions import col, count, mean,first
+trans_block = spark.sql('select number, from_unixtime(timestamp, "yyyy/MM/dd") AS Date from ethereumetl.blocks')
+trans = spark.sql('select hash, block_number from ethereumetl.transactions')
+trans = trans.groupBy('block_number').agg(count("hash").alias("number_of_transactions_in_this_block"))
+trans_overtime = trans_block.join(trans, trans_block.number == trans.block_number, "inner")
+trans_overtime = trans_overtime.select('number_of_transactions_in_this_block','block_number','Date')
+trans_overtime = trans_overtime.groupBy("Date").agg(sum("number_of_transactions_in_this_block").alias("transactions_per_day"))
+
+# COMMAND ----------
+
+display(trans_overtime)
 
 # COMMAND ----------
 
@@ -286,8 +376,18 @@ ERC20_TRANSFER1.limit(1)
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC -- TBD
+from pyspark.sql.types import *
+from pyspark.sql.functions import *
+trans = spark.sql('select number, from_unixtime(timestamp, "yyyy/MM/dd") AS Date from ethereumetl.blocks')
+token_block = spark.sql('select value, block_number from ethereumetl.token_transfers')
+ERC20_overtime = trans.join(token_block, trans.number == token_block.block_number,'inner')
+ERC20_overtime = ERC20_overtime.select('value','block_number','Date')
+ERC20_overtime = ERC20_overtime.groupBy("Date").agg(sum("value").alias("ERC20_Transfer_Amount"))
+
+
+# COMMAND ----------
+
+display(ERC20_overtime)
 
 # COMMAND ----------
 
