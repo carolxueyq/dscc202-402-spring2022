@@ -184,12 +184,6 @@ print(percents, '% of ERC-20 transfers are sent to new addresses')
 
 # COMMAND ----------
 
-# MAGIC 
-# MAGIC %md 
-# MAGIC #### - around 60% of ERC-20 transfers are sent to new addresses
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ## Q: In what order are transactions included in a block in relation to their gas price?
 # MAGIC - hint: find a block with multiple transactions 
@@ -223,8 +217,12 @@ transactionDF = transactionDF.select("throughput").limit(1)
 
 # COMMAND ----------
 
+display(transactionDF)
+
+# COMMAND ----------
+
 # MAGIC %sql
-# MAGIC SELECT max(transaction_count) / 15
+# MAGIC SELECT (max(transaction_count) / 15) AS highest_transaction_throughput
 # MAGIC FROM ethereumetl.blocks
 
 # COMMAND ----------
@@ -271,9 +269,9 @@ ERC20_TRANSFER1.limit(1)
 
 # COMMAND ----------
 
-# token_address = '0xbe59434473c50021b30686b6d34cdd0b1b4f6198'
-# block_number = 9800410
-# date = 1585935118 OR 2020/04/03 17:04:00
+# token_address = '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c'
+# block = 884504
+# date =  2016/01/21 23:01:00
 
 # COMMAND ----------
 
@@ -284,10 +282,6 @@ from pyspark.sql.functions import *
 tokens = spark.sql('select address, total_supply from ethereumetl.tokens')
 transfers = spark.sql('select token_address, value, to_address, from_address,block_number from ethereumetl.token_transfers')
 blocks = spark.sql('select number, from_unixtime(timestamp, "yyyy/MM/dd HH:MM:SS") AS Date from ethereumetl.blocks')
-
-# COMMAND ----------
-
-transfers = transfers.where(col("token_address") == '0xbe59434473c50021b30686b6d34cdd0b1b4f6198')
 
 # COMMAND ----------
 
@@ -306,27 +300,36 @@ balance = balance.join(blocks, blocks.number == balance.block1, "inner")
 
 # COMMAND ----------
 
+balance = balance.select('token_address', 'balance','Date')
+balance = balance.where(col("token_address") == '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c')
+
+# COMMAND ----------
+
 display(balance)
 
 # COMMAND ----------
 
-# Extract date from the block of 9800410
-spark.sql('select number, timestamp from ethereumetl.blocks').where(F.col("number") == 9800410).show()
+# token_address = '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c'
+# block = 884504
+# date =  2016/01/21 23:01:00
+# Extract date from the block of 884504
+spark.sql('select number, timestamp from ethereumetl.blocks').where(col("number") == 884504).show()
 
 # COMMAND ----------
 
-d = spark.sql('select number, timestamp from ethereumetl.blocks').where(F.col("number") == 9800410)
+d = spark.sql('select number, timestamp from ethereumetl.blocks').where(col("number") == 884504)
 
 # COMMAND ----------
 
-d = d.withColumn("Date", F.from_unixtime("timestamp", "yyyy/MM/dd HH:MM:SS"))
+d = d.withColumn("Date", from_unixtime("timestamp", "yyyy/MM/dd HH:MM:SS"))
 d.show()
 
 # COMMAND ----------
 
-# token_address = '0xbe59434473c50021b30686b6d34cdd0b1b4f6198'
-# block_number = 9800410
-# date = 1585935118
+# token_address = '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c'
+# block = 884504
+# date =  2016/01/21 23:01:00
+# PURE SQL APPROACH
 
 # COMMAND ----------
 
@@ -344,9 +347,8 @@ d.show()
 # MAGIC INNER JOIN ethereumetl.blocks 
 # MAGIC ON ethereumetl.token_transfers.block_number = ethereumetl.blocks.number)
 # MAGIC 
-# MAGIC WHERE token_address = '0xbe59434473c50021b30686b6d34cdd0b1b4f6198'
-# MAGIC AND timestamp = "1585935118"
-# MAGIC 
+# MAGIC WHERE token_address = '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c'
+# MAGIC AND timestamp = "1453418993"
 # MAGIC GROUP BY token_address
 
 # COMMAND ----------
