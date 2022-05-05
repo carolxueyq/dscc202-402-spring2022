@@ -267,87 +267,74 @@ ERC20_TRANSFER1.limit(1)
 
 # COMMAND ----------
 
-# token_address = '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c'
-# block = 884504
-# date =  2016/01/21 23:01:00
+# wallet_address = '0xff29d3e552155180809ea3a877408a4620058086'
+# date =  2022-01-07 09:01:28
 
 # COMMAND ----------
 
 from pyspark.sql.types import *
-from pyspark.sql import Window
 from pyspark.sql.functions import *
 
-tokens = spark.sql('select address, total_supply from ethereumetl.tokens')
-transfers = spark.sql('select token_address, value, to_address, from_address,block_number from ethereumetl.token_transfers')
-blocks = spark.sql('select number, from_unixtime(timestamp, "yyyy/MM/dd HH:MM:SS") AS Date from ethereumetl.blocks')
+# COMMAND ----------
+
+erc20_tokentransfer = spark.sql("select token_address,from_address,to_address,value, block_number from g06_db.erc20_token_transfer")
+
+erc20_blocks = spark.sql("select number, timestamp from g06_db.block_date_silver")
+
+erc20_tokentransfer = erc20_tokentransfer.join(erc20_blocks, erc20_tokentransfer.block_number == erc20_blocks.number, "inner").select("token_address", "from_address", "to_address", "value", "block_number", "timestamp")
 
 # COMMAND ----------
 
-transfer_from = transfers.groupBy("token_address","from_address").agg(sum("value").alias("send_value"),first("block_number").alias("block1")).withColumn("address",col("from_address"))
-    
-transfer_to = transfers.groupBy("token_address","to_address").agg(sum("value").alias("receive_value"),first("block_number").alias("block2")).withColumn("address",col("to_address"))
+fromDF = erc20_tokentransfer.groupBy("timestamp","from_address").agg(sum(erc20_tokentransfer.value).alias("send_value")).withColumn("address",col("from_address"))
 
 # COMMAND ----------
 
-balance = transfer_from.join(transfer_to, ["token_address", "address"], "inner").withColumn("balance", col("receive_value")-col("send_value"))
+toDF = erc20_tokentransfer.groupBy("timestamp","to_address").agg(sum(erc20_tokentransfer.value).alias("receive_value")).withColumn("address",col("to_address"))
 
 # COMMAND ----------
 
-balance = balance.select("token_address","balance",'block1')
-balance = balance.join(blocks, blocks.number == balance.block1, "inner")
+balance = fromDF.join(toDF, ["address", "timestamp"], "inner").withColumn("balance", col("receive_value") - col("send_value"))
 
 # COMMAND ----------
 
-balance = balance.select('token_address', 'balance','Date')
-balance = balance.where(col("token_address") == '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c')
+balance = balance.select("address","timestamp","balance")
+balancechoice = balance.where((col("address") == "0xff29d3e552155180809ea3a877408a4620058086"))
+balancechoice = balancechoice.where(col("timestamp") == "2022-01-07 09:01:28")
 
 # COMMAND ----------
 
-display(balance)
+display(balancechoice)
 
 # COMMAND ----------
 
-# token_address = '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c'
-# block = 884504
-# date =  2016/01/21 23:01:00
-# Extract date from the block of 884504
-spark.sql('select number, timestamp from ethereumetl.blocks').where(col("number") == 884504).show()
+# MAGIC %md
+# MAGIC #### - wallet address of 0xff29d3e552155180809ea3a877408a4620058086 has a balance of 932183759729303016776 given the date of 932183759729303016776
 
 # COMMAND ----------
 
-d = spark.sql('select number, timestamp from ethereumetl.blocks').where(col("number") == 884504)
-
-# COMMAND ----------
-
-d = d.withColumn("Date", from_unixtime("timestamp", "yyyy/MM/dd HH:MM:SS"))
-d.show()
-
-# COMMAND ----------
-
-# token_address = '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c'
-# block = 884504
-# date =  2016/01/21 23:01:00
-# PURE SQL APPROACH
+# sql approach
+# wallet_address = '0xff29d3e552155180809ea3a877408a4620058086'
+# date =  2022-01-07 09:01:28
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT token_address, sum(value) AS balance, FIRST(from_unixtime(timestamp, 'yyyy/MM/dd HH:MM:SS')) AS Date
+# MAGIC SELECT address, sum(value) AS balance, timestamp
 # MAGIC FROM 
 # MAGIC 
-# MAGIC (SELECT token_address, value,block_number, timestamp, to_address AS address
-# MAGIC FROM ethereumetl.token_transfers
-# MAGIC INNER JOIN ethereumetl.blocks 
-# MAGIC ON ethereumetl.token_transfers.block_number = ethereumetl.blocks.number
+# MAGIC (SELECT value,block_number, timestamp, to_address AS address
+# MAGIC FROM g06_db.erc20_token_transfer
+# MAGIC INNER JOIN g06_db.block_date_silver
+# MAGIC ON g06_db.erc20_token_transfer.block_number = g06_db.block_date_silver.number
 # MAGIC UNION
-# MAGIC SELECT token_address, -value, block_number, timestamp, from_address AS address
-# MAGIC FROM ethereumetl.token_transfers
-# MAGIC INNER JOIN ethereumetl.blocks 
-# MAGIC ON ethereumetl.token_transfers.block_number = ethereumetl.blocks.number)
+# MAGIC SELECT -value, block_number, timestamp, from_address AS address
+# MAGIC FROM g06_db.erc20_token_transfer
+# MAGIC INNER JOIN g06_db.block_date_silver
+# MAGIC ON g06_db.erc20_token_transfer.block_number = g06_db.block_date_silver.number)
 # MAGIC 
-# MAGIC WHERE token_address = '0xcfc00378ca44da2a0c465367f1f104a9d9e7a83c'
-# MAGIC AND timestamp = "1453418993"
-# MAGIC GROUP BY token_address
+# MAGIC WHERE address = '0xff29d3e552155180809ea3a877408a4620058086'
+# MAGIC AND timestamp = "2022-01-07 09:01:28"
+# MAGIC GROUP BY address, timestamp
 
 # COMMAND ----------
 
