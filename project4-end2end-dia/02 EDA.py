@@ -116,7 +116,7 @@ transferDF = spark.sql('select * from ethereumetl.token_transfers')
 
 from pyspark.sql.functions import col, count, mean,first
 
-transferDF = transferDF.groupBy("token_address").agg(count("transaction_hash").alias("transfer_count_for_each_token_address"))
+transferDF = transferDF.groupBy("token_address").agg(sum("value").alias("transfer_count_for_each_token_address"))
 q5 = transferDF.sort(col("transfer_count_for_each_token_address").desc()).limit(100)
 
 # COMMAND ----------
