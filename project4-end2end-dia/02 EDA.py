@@ -110,6 +110,10 @@ print(perc*100,'% of transactions are calls to contracts')
 
 # COMMAND ----------
 
+# Python Approach
+
+# COMMAND ----------
+
 transferDF = spark.sql('select * from ethereumetl.token_transfers')
 
 # COMMAND ----------
@@ -139,14 +143,27 @@ display(new)
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC (SELECT count(*)
-# MAGIC  FROM(SELECT count(transaction_hash) AS transfer_count
-# MAGIC       FROM ethereumetl.token_transfers
-# MAGIC       GROUP BY token_address, to_address)) / (SELECT count(*) FROM ethereumetl.token_transfers)
+# MAGIC select a.erc20_new_cnt/b.erc20_cnt
+# MAGIC from 
+# MAGIC (
+# MAGIC   select count(*) erc20_new_cnt
+# MAGIC   from
+# MAGIC   (
+# MAGIC     select token_address,count(transaction_hash) tran_cnt
+# MAGIC     from ethereumetl.token_transfers
+# MAGIC     group by token_address
+# MAGIC     having tran_cnt==1
+# MAGIC   )
+# MAGIC )a
+# MAGIC join
+# MAGIC (
+# MAGIC   select count(distinct token_address) erc20_cnt
+# MAGIC   from ethereumetl.token_transfers
+# MAGIC )b
 
 # COMMAND ----------
 
-# OR USE PYTHON
+# PYTHON
 transferDF1 = spark.sql('select token_address, from_address, to_address, transaction_hash from ethereumetl.token_transfers')
 
 # COMMAND ----------
@@ -255,6 +272,14 @@ display(transactionDF)
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC select  *
+# MAGIC from ethereumetl.token_transfers
+# MAGIC order by value desc
+# MAGIC limit 1
+
+# COMMAND ----------
+
 ERC20_TRANSFER = spark.sql('SELECT * FROM ethereumetl.token_transfers')
 ERC20_TRANSFER1 = ERC20_TRANSFER.sort(col("value").desc())
 # show the row with the maximum amount of transfers of ERC-20
@@ -304,11 +329,6 @@ balancechoice = balancechoice.where(col("timestamp") == "2022-01-07 09:01:28")
 # COMMAND ----------
 
 display(balancechoice)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### - wallet address of 0xff29d3e552155180809ea3a877408a4620058086 has a balance of 932183759729303016776 given the date of 932183759729303016776
 
 # COMMAND ----------
 
