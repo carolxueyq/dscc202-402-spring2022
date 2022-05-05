@@ -94,7 +94,6 @@
 # COMMAND ----------
 
 # MAGIC %python
-# MAGIC spark.conf.set("spark.sql.shuffle.partitions",1000)
 # MAGIC n1 = transactions_to_adress_DF.first()['count(to_address)']
 # MAGIC n2 = transactions_to_adress_all_DF.first()['count(to_address)']
 
@@ -170,7 +169,6 @@ ERC20_TRANSFER_new = ERC20_TRANSFER.where(ERC20_TRANSFER.transfer_count == 1)
 
 # COMMAND ----------
 
-spark.conf.set("spark.sql.shuffle.partitions",1000)
 new_count = ERC20_TRANSFER_new.count()
 overall_count = ERC20_TRANSFER.count()
 
