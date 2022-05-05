@@ -256,9 +256,9 @@ display(transactionDF)
 # COMMAND ----------
 
 ERC20_TRANSFER = spark.sql('SELECT * FROM ethereumetl.token_transfers')
-ERC20_TRANSFER1 = ERC20_TRANSFER.sort(ERC20_TRANSFER.value).desc()
+ERC20_TRANSFER1 = ERC20_TRANSFER.sort(col("value").desc())
 # show the row with the maximum amount of transfers of ERC-20
-ERC20_TRANSFER1.limit(1)
+ERC20_TRANSFER1.limit(1).show()
 
 # COMMAND ----------
 
