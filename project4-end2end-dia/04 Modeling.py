@@ -29,7 +29,7 @@ print(wallet_address,start_date)
 # COMMAND ----------
 
 from pyspark.sql.types import *
-from pyspark.sql import functions as F6
+from pyspark.sql import functions as F
 
 # Load the data from the lake
 wallet_balance_df = spark.read.format('delta').load("/mnt/dscc202-datasets/misc/G06/tokenrec/newtables")
@@ -199,96 +199,88 @@ validation_df = validation_df.withColumn("transaction", validation_df["transacti
 
 # COMMAND ----------
 
-modelName = "G06_Model"
-def mlflow_als(rank,maxIter,regParam):
-  with mlflow.start_run(run_name = modelName+"-run") as run:
-    seed = 42
-    (split_60_df, split_a_20_df, split_b_20_df) = wallet_count_df.randomSplit([0.6, 0.2, 0.2], seed = seed)
-    training_df = split_60_df.cache()
-    validation_df = split_a_20_df.cache()
-    test_df = split_b_20_df.cache()
-    input_schema = Schema([ColSpec("integer", "new_tokenId"),ColSpec("integer", "new_walletId")])
-    output_schema = Schema([ColSpec("double")])
-    signature = ModelSignature(inputs=input_schema, outputs=output_schema)
-    
-    # Create model
-    # Initialize our ALS learner
-    als = ALS(rank=rank, maxIter=maxIter, regParam=regParam,seed=42)
-    als.setItemCol("new_tokenId")\
-       .setRatingCol("buy_count")\
-       .setUserCol("new_walletId")\
-       .setColdStartStrategy("drop")
-    reg_eval = RegressionEvaluator(predictionCol="prediction", labelCol="buy_count", metricName="rmse")
-
-    alsModel = als.fit(training_df)
-    validation_metric = reg_eval.evaluate(alsModel.transform(validation_df))
-    
-    mlflow.log_metric('valid_' + reg_eval.getMetricName(), validation_metric) 
-    
-    # Log model
-    mlflow.spark.log_model(spark_model=alsModel, signature = signature,artifact_path='als-model')
-                           
-                           # registered_model_name=modelName)
-  return alsModel, validation_metric
+# MAGIC %md
+# MAGIC ## Baseline
 
 # COMMAND ----------
 
-initial_model, val_metric = mlflow_als(rank = 5,maxIter = 5, regParam = 0.6)[0], mlflow_als(rank = 5,maxIter = 5, regParam = 0.6)[1]
+modelName = "G06_Model"
+def mlflow_als(rank,maxIter,regParam):
+
+    with mlflow.start_run(run_name = modelName+"-run", nested=True) as run:
+        seed = 42
+        (split_60_df, split_a_20_df, split_b_20_df) = wallet_count_df.randomSplit([0.6, 0.2, 0.2], seed = seed)
+        training_df = split_60_df.cache()
+        validation_df = split_a_20_df.cache()
+        test_df = split_b_20_df.cache()
+        input_schema = Schema([ColSpec("integer", "new_tokenId"),ColSpec("integer", "new_walletId")])
+        output_schema = Schema([ColSpec("double")])
+        signature = ModelSignature(inputs=input_schema, outputs=output_schema)
+    
+        # Create model
+        # Initialize our ALS learner
+        als = ALS(rank=rank, maxIter=maxIter, regParam=regParam,seed=42)
+        als.setItemCol("new_tokenId")\
+           .setRatingCol("buy_count")\
+           .setUserCol("new_walletId")\
+           .setColdStartStrategy("drop")
+        reg_eval = RegressionEvaluator(predictionCol="prediction", labelCol="buy_count", metricName="rmse")
+
+        alsModel = als.fit(training_df)
+        validation_metric = reg_eval.evaluate(alsModel.transform(validation_df))
+    
+        mlflow.log_metric('valid_' + reg_eval.getMetricName(), validation_metric) 
+    
+        runID = run.info.run_uuid
+        experimentID = run.info.experiment_id
+    
+        # Log model
+        mlflow.spark.log_model(spark_model=alsModel, signature = signature,artifact_path='als-model')
+                           
+                           # registered_model_name=modelName)
+    return alsModel, validation_metric
+
+# COMMAND ----------
+
+initial_model, val_metric = mlflow_als(rank = 5,maxIter = 5, regParam = 0.6)
 print(f"The trained ALS achieved an RMSE {val_metric} on the validation data")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Hyper Tuning Using Hyperopt fmin()
 
 # COMMAND ----------
 
 from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
  
 def train_with_hyperopt(params):
-  """
-  An example train method that calls into MLlib.
-  This method is passed to hyperopt.fmin().
-  
-  :param params: hyperparameters as a dict. Its structure is consistent with how search space is defined. See below.
-  :return: dict with fields 'loss' (scalar loss) and 'status' (success/failure status of run)
-  """
-  # For integer parameters, make sure to convert them to int type if Hyperopt is searching over a continuous range of values.
-  rank = int(params['rank'])
-  maxIter = int(params['maxIter'])
-  regParam = float(params['regParam'])
- 
-  model, rmse = mlflow_als(rank, maxIter, regParam)[0], mlflow_als(rank, maxIter, regParam)[1]
-  
-  # Hyperopt expects you to return a loss (for which lower is better), so take the negative of the f1_score (for which higher is better).
-  loss = rmse
-  return {'loss': loss, 'status': STATUS_OK}
+    rank = int(params['rank'])
+    maxIter = int(params['maxIter'])
+    regParam= float(params['regParam'])
+    model, rmse = mlflow_als(rank, maxIter, regParam)[0], mlflow_als(rank, maxIter, regParam)[1]
+    loss = rmse
+    return {'loss': loss, 'status': STATUS_OK}
 
 # COMMAND ----------
 
 import numpy as np
 space = {
-  'rank': hp.choice('minInstancesPerNode', [5, 8,10]),
-  'maxIter': hp.choice('maxIter', [5, 10, 15]),
-  'regParam': hp.choice('regParam', [0.5, 0.6, 0.7]),
+  'rank': hp.choice('rank', [5,10]),
+  'maxIter': hp.choice('maxIter', [5, 10]),
+  'regParam': hp.choice('regParam', [0.6, 0.7]),
 }
 
 # COMMAND ----------
 
-mlflow.end_run("3805545008156543")
+mlflow.end_run()
 
 # COMMAND ----------
 
 algo=tpe.suggest
  
 with mlflow.start_run() as run:
-  best_params = fmin(
-    fn=train_with_hyperopt,
-    space=space,
-    algo=algo,
-    max_evals=5)
-
-# COMMAND ----------
-
-mlflow_als(5,5,0.6)
-#mlflow_als(5,10,0.2)
-#mlflow_als(5,5,0.3)
-#mlflow_als(5,10,0.3)
+    best_params = fmin(fn=train_with_hyperopt,space=space,algo=algo,max_evals=3)
 
 # COMMAND ----------
 
@@ -308,9 +300,24 @@ for mv in client.search_model_versions(f"name='{modelName}'"):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Retrain the full train set with best param
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Register the best model at staging
+
+# COMMAND ----------
+
+from mlflow.tracking import MlflowClient
 client = MlflowClient()
 model_versions = []
-    
+modelName = "G06_Model"
 for mv in client.search_model_versions(f"name='{modelName}'"):
     model_versions.append(dict(mv)['version'])
     if dict(mv)['current_stage'] == 'Staging':
@@ -419,6 +426,56 @@ RMSE_prod = reg_eval.evaluate(test_predictions_prod)
 # COMMAND ----------
 
 RMSE_prod
+
+# COMMAND ----------
+
+client.transition_model_version_stage(name=modelName,version=model_versions[0],stage="Staging")
+
+# COMMAND ----------
+
+Utils.create_widgets()[0]
+
+# COMMAND ----------
+
+wallet_address = Utils.create_widgets()[0]
+dff = wallet_count_df.where(col("walletId") == wallet_address).select('new_walletId')
+
+# COMMAND ----------
+
+walletId = dff.head()[0]
+
+# COMMAND ----------
+
+from pyspark.sql import functions as F
+def recommend(walletId: int)->(DataFrame,DataFrame):
+    bought_token = wallet_count_df.filter(wallet_count_df.new_walletId == walletId).join(tokens_df, wallet_count_df.tokenId == tokens_df.address).select('new_tokenId', 'symbol', 'name','buy_count')
+    unbought_token = wallet_count_df.filter(~ wallet_count_df['new_tokenId'].isin([token['new_tokenId'] for token in bought_token.collect()])).select('new_tokenId').withColumn('new_walletId', F.lit(walletId)).distinct()
+ 
+    model = mlflow.spark.load_model('models:/'+modelName+'/Staging')
+    predicted_buy_counts = model.transform(unbought_token)
+ 
+    return (bought_token.select('symbol','name','buy_count').orderBy('buy_count', ascending = False), predicted_buy_counts.join(wallet_count_df, 'new_tokenId') \
+                .join(tokens_df, wallet_count_df.tokenId == tokens_df.address) \
+                .select('symbol', 'name', 'prediction') \
+                .distinct() \
+                .orderBy('prediction', ascending = False)
+                .limit(5))
+
+# COMMAND ----------
+
+walletId
+
+# COMMAND ----------
+
+a = recommend(walletId)
+
+# COMMAND ----------
+
+display(a[1])
+
+# COMMAND ----------
+
+
 
 # COMMAND ----------
 
