@@ -256,6 +256,22 @@ for mv in client.search_model_versions(f"name='{modelName}'"):
 
 # COMMAND ----------
 
+client = MlflowClient()
+model_versions = []
+    
+for mv in client.search_model_versions(f"name='{modelName}'"):
+    model_versions.append(dict(mv)['version'])
+    if dict(mv)['current_stage'] == 'Staging':
+        print("Archiving: {}".format(dict(mv)))
+        # Archive the currently staged model
+        client.transition_model_version_stage(
+            name= modelName,
+            version=dict(mv)['version'],
+            stage="Archived"
+        )
+
+# COMMAND ----------
+
 client.transition_model_version_stage(name=modelName,version=model_versions[0],stage="Staging")
 
 # COMMAND ----------
