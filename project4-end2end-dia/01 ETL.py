@@ -41,6 +41,12 @@ spark.conf.set('start.date',start_date)
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Group 6 Pipeline
+# MAGIC ![Image](https://github.com/carolxueyq/dscc202-402-spring2022/blob/final_project/project4-end2end-dia/pipeline.png?raw=true)
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC show tables in ethereumetl
 
