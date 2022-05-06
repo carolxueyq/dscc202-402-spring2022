@@ -226,10 +226,62 @@ def mlflow_als(rank,maxIter,regParam):
     mlflow.log_metric('valid_' + reg_eval.getMetricName(), validation_metric) 
     
     # Log model
-    mlflow.spark.log_model(spark_model=alsModel, signature = signature,artifact_path='als-model',registered_model_name=modelName)
-    runID = run.info.run_uuid
-    experimentID = run.info.experiment_id
-    print("ALS model with run_id", {runID},"and experiment_id",{experimentID})
+    mlflow.spark.log_model(spark_model=alsModel, signature = signature,artifact_path='als-model')
+                           
+                           # registered_model_name=modelName)
+  return alsModel, validation_metric
+
+# COMMAND ----------
+
+initial_model, val_metric = mlflow_als(rank = 5,maxIter = 5, regParam = 0.6)[0], mlflow_als(rank = 5,maxIter = 5, regParam = 0.6)[1]
+print(f"The trained ALS achieved an RMSE {val_metric} on the validation data")
+
+# COMMAND ----------
+
+from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
+ 
+def train_with_hyperopt(params):
+  """
+  An example train method that calls into MLlib.
+  This method is passed to hyperopt.fmin().
+  
+  :param params: hyperparameters as a dict. Its structure is consistent with how search space is defined. See below.
+  :return: dict with fields 'loss' (scalar loss) and 'status' (success/failure status of run)
+  """
+  # For integer parameters, make sure to convert them to int type if Hyperopt is searching over a continuous range of values.
+  rank = int(params['rank'])
+  maxIter = int(params['maxIter'])
+  regParam = float(params['regParam'])
+ 
+  model, rmse = mlflow_als(rank, maxIter, regParam)[0], mlflow_als(rank, maxIter, regParam)[1]
+  
+  # Hyperopt expects you to return a loss (for which lower is better), so take the negative of the f1_score (for which higher is better).
+  loss = rmse
+  return {'loss': loss, 'status': STATUS_OK}
+
+# COMMAND ----------
+
+import numpy as np
+space = {
+  'rank': hp.choice('minInstancesPerNode', [5, 8,10]),
+  'maxIter': hp.choice('maxIter', [5, 10, 15]),
+  'regParam': hp.choice('regParam', [0.5, 0.6, 0.7]),
+}
+
+# COMMAND ----------
+
+mlflow.end_run("3805545008156543")
+
+# COMMAND ----------
+
+algo=tpe.suggest
+ 
+with mlflow.start_run() as run:
+  best_params = fmin(
+    fn=train_with_hyperopt,
+    space=space,
+    algo=algo,
+    max_evals=5)
 
 # COMMAND ----------
 
