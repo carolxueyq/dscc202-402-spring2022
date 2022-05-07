@@ -54,97 +54,17 @@ print('Number of unique tokens: {0}'.format(unique_tokens))
 
 # cache
 wallet_count_df.cache()
-wallet_count_df.printSchema()
-
 tokens_df.cache()
-tokens_df.printSchema()
-
 
 # COMMAND ----------
 
 from pyspark.sql import Window
 from pyspark.sql.functions import dense_rank
 wallet_count_df = wallet_count_df.withColumn("new_tokenId",dense_rank().over(Window.orderBy("token_address")))
-
-
-
 wallet_count_df = wallet_count_df.withColumn("new_walletId",dense_rank().over(Window.orderBy("wallet_address")))
 
 wallet_count_df = wallet_count_df.withColumnRenamed("token_address","tokenId")
 wallet_count_df = wallet_count_df.withColumnRenamed("wallet_address","walletId")
-
-# COMMAND ----------
-
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import numpy as np
-
-def prepareSubplot(xticks, yticks, figsize=(10.5, 6), hideLabels=False, gridColor='#999999',
-                gridWidth=1.0, subplots=(1, 1)):
-    """Template for generating the plot layout."""
-    plt.close()
-    fig, axList = plt.subplots(subplots[0], subplots[1], figsize=figsize, facecolor='white',
-                               edgecolor='white')
-    if not isinstance(axList, np.ndarray):
-        axList = np.array([axList])
-        
-    for ax in axList.flatten():
-        ax.axes.tick_params(labelcolor='#999999', labelsize='10')
-        for axis, ticks in [(ax.get_xaxis(), xticks), (ax.get_yaxis(), yticks)]:
-            axis.set_ticks_position('none')
-            axis.set_ticks(ticks)
-            axis.label.set_color('#999999')
-            if hideLabels: axis.set_ticklabels([])
-        ax.grid(color=gridColor, linewidth=gridWidth, linestyle='-')
-        map(lambda position: ax.spines[position].set_visible(False), ['bottom', 'top', 'left', 'right'])
-        
-    if axList.size == 1:
-        axList = axList[0]  # Just return a single axes object for a regular plot
-    return fig, axList
-    
-
-from pyspark.sql import DataFrame
-import inspect
-def printDataFrames(verbose=False):
-    frames = inspect.getouterframes(inspect.currentframe())
-    notebookGlobals = frames[1][0].f_globals
-    for k,v in notebookGlobals.items():
-        if isinstance(v, DataFrame) and '_' not in k:
-            print("{0}: {1}".format(k, v.columns)) if verbose else print("{0}".format(k))
-
-
-def printLocalFunctions(verbose=False):
-    frames = inspect.getouterframes(inspect.currentframe())
-    notebookGlobals = frames[1][0].f_globals
-    import types
-    ourFunctions = [(k, v.__doc__) for k,v in notebookGlobals.items() if isinstance(v, types.FunctionType) and v.__module__ == '__main__']
-    
-    for k,v in ourFunctions:
-        print("** {0} **".format(k))
-        if verbose:
-            print(v)
-
-# COMMAND ----------
-
-# count total entries
-total_entries = wallet_count_df.count()
-
-# find percentage listens by number of songs played
-number_transactions = []
-for i in range(10):
-  number_transactions.append(float(wallet_count_df.filter(wallet_count_df.transaction == i+1).count())/total_entries*100)
-
-# create bar plot
-bar_width = 0.7
-colorMap = 'Set1'
-cmap = cm.get_cmap(colorMap)
-
-fig, ax = prepareSubplot(np.arange(0, 10, 1), np.arange(0, 80, 5))
-plt.bar(np.linspace(1,10,10), number_transactions, width=bar_width, color=cmap(0))
-plt.xticks(np.linspace(1,10,10) + bar_width/2.0, np.linspace(1,10,10))
-plt.xlabel('Number of Plays'); plt.ylabel('%')
-plt.title('Percentage Number of Plays of Songs')
-display(fig)
 
 # COMMAND ----------
 
@@ -164,24 +84,6 @@ from mlflow.types.schema import Schema, ColSpec
 from pyspark.ml.recommendation import ALS
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
-df=sqlContext.sql("select * from G05_db.SilverTable_Wallets")
-result_df = df.select("*").toPandas()
-token_ids_with_total_transactions = wallet_count_df.groupBy('tokenId') \
-                                                       .agg(F.count(wallet_count_df.transaction).alias('Transaction_Count'),
-                                                            F.sum(wallet_count_df.transaction).alias('Total_transaction')) \
-                                                       .orderBy('Total_transaction', ascending = False)
-
-print('token_ids_with_total_transactions:',
-token_ids_with_total_transactions.show(3, truncate=False))
-
-# Join with metadata to get artist and song title
-token_names_with_transaction_df = token_ids_with_total_transactions.join(tokens_df,  token_ids_with_total_transactions.tokenId == tokens_df.address) \
-                                                      .filter('Transaction_Count >= 2') \
-                                                      .select('name', 'symbol', 'address', 'Transaction_Count','Total_transaction') \
-                                                      .orderBy('Total_transaction', ascending = False)
-
-#print('token_names_with_transaction_df:',
-#token_names_with_transaction_df.show(20, truncate = False))
 
 # COMMAND ----------
 
@@ -189,13 +91,14 @@ seed = 42
 (split_60_df, split_a_20_df, split_b_20_df) = wallet_count_df.randomSplit([0.6, 0.2, 0.2], seed = seed)
 
 # Let's cache these datasets for performance
-training_df = split_60_df.cache()
-validation_df = split_a_20_df.cache()
-test_df = split_b_20_df.cache()
+training_df = split_60_df
+validation_df = split_a_20_df
+test_df = split_b_20_df
 
 # COMMAND ----------
 
-validation_df = validation_df.withColumn("transaction", validation_df["transaction"].cast(DoubleType()))
+validation_df = validation_df.withColumn("buy_count", validation_df["buy_count"].cast(DoubleType()))
+test_df = test_df.withColumn("buy_count", test_df["buy_count"].cast(DoubleType()))
 
 # COMMAND ----------
 
@@ -213,6 +116,8 @@ def mlflow_als(rank,maxIter,regParam):
         training_df = split_60_df.cache()
         validation_df = split_a_20_df.cache()
         test_df = split_b_20_df.cache()
+        validation_df = validation_df.withColumn("buy_count", validation_df["buy_count"].cast(DoubleType()))
+        test_df = test_df.withColumn("buy_count", test_df["buy_count"].cast(DoubleType()))
         input_schema = Schema([ColSpec("integer", "new_tokenId"),ColSpec("integer", "new_walletId")])
         output_schema = Schema([ColSpec("double")])
         signature = ModelSignature(inputs=input_schema, outputs=output_schema)
@@ -230,19 +135,20 @@ def mlflow_als(rank,maxIter,regParam):
         validation_metric = reg_eval.evaluate(alsModel.transform(validation_df))
     
         mlflow.log_metric('valid_' + reg_eval.getMetricName(), validation_metric) 
-    
+        mlflow.log_param("rank", rank)
+        mlflow.log_param("maxIter", maxIter)
+        mlflow.log_param("regParam", regParam)
+        
         runID = run.info.run_uuid
         experimentID = run.info.experiment_id
     
         # Log model
         mlflow.spark.log_model(spark_model=alsModel, signature = signature,artifact_path='als-model')
-                           
-                           # registered_model_name=modelName)
     return alsModel, validation_metric
 
 # COMMAND ----------
 
-initial_model, val_metric = mlflow_als(rank = 5,maxIter = 5, regParam = 0.6)
+initial_model, val_metric = mlflow_als(rank = 20,maxIter = 20, regParam = 0.5)
 print(f"The trained ALS achieved an RMSE {val_metric} on the validation data")
 
 # COMMAND ----------
@@ -266,9 +172,9 @@ def train_with_hyperopt(params):
 
 import numpy as np
 space = {
-  'rank': hp.choice('rank', [5,10]),
-  'maxIter': hp.choice('maxIter', [5, 10]),
-  'regParam': hp.choice('regParam', [0.6, 0.7]),
+  'rank': hp.choice('rank', [20, 25]),
+  'maxIter': hp.choice('maxIter', [20, 25]),
+  'regParam': hp.choice('regParam', [0.5, 0.6]),
 }
 
 # COMMAND ----------
@@ -284,165 +190,65 @@ with mlflow.start_run() as run:
 
 # COMMAND ----------
 
-client = MlflowClient()
-model_versions = []
-    
-for mv in client.search_model_versions(f"name='{modelName}'"):
-    model_versions.append(dict(mv)['version'])
-    if dict(mv)['current_stage'] == 'Staging':
-        print("Archiving: {}".format(dict(mv)))
-        # Archive the currently staged model
-        client.transition_model_version_stage(
-            name= modelName,
-            version=dict(mv)['version'],
-            stage="Archived"
-        )
+from hyperopt import space_eval
+best = space_eval(space,best_params)
+
+# COMMAND ----------
+
+best_rank = best['rank']
+best_iter = best['maxIter']
+best_reg = best['regParam']
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Retrain the full train set with best param
+# MAGIC ## Retrain the full train set with best param and register to staging
 
 # COMMAND ----------
 
-
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Register the best model at staging
+final_model, validation_rmse = mlflow_als(best_rank, best_iter, best_reg)
 
 # COMMAND ----------
 
-from mlflow.tracking import MlflowClient
 client = MlflowClient()
 model_versions = []
-modelName = "G06_Model"
+
+
 for mv in client.search_model_versions(f"name='{modelName}'"):
     model_versions.append(dict(mv)['version'])
     if dict(mv)['current_stage'] == 'Staging':
         print("Archiving: {}".format(dict(mv)))
-        # Archive the currently staged model
         client.transition_model_version_stage(
-            name= modelName,
+            name=modelName,
             version=dict(mv)['version'],
             stage="Archived"
         )
-
-# COMMAND ----------
-
+# best model
 client.transition_model_version_stage(name=modelName,version=model_versions[0],stage="Staging")
 
 # COMMAND ----------
 
-runs = client.search_runs('3805545008156543', max_results=1)
-runs[0].data.metrics
+# MAGIC %md
+# MAGIC ## Test dataset
 
 # COMMAND ----------
 
-
-
-# COMMAND ----------
-
-import uuid
-
-model_name = "ALS_Recommendation"
-model_name
+test_predictions = final_model.transform(test_df)
+test_predictions = test_predictions.withColumn("prediction", F.round(col("prediction"),0))
 
 # COMMAND ----------
 
-runID = '6ad23faf96e54547890957f2a41555ac'
-model_uri = "runs:/{run_id}/als-model".format(run_id=runID)
-
-model_details = mlflow.register_model(model_uri=model_uri, name=model_name)
-
-# COMMAND ----------
-
-client.transition_model_version_stage(
-  name=model_details.name,
-  version=model_details.version,
-  stage='Production')
-
-# COMMAND ----------
-
-model_version_details = client.get_model_version(
-  name=model_details.name,
-  version=model_details.version,
-)
-print("The current model stage is: '{stage}'".format(stage=model_version_details.current_stage))
-
-# COMMAND ----------
-
-mlflow.spark.load_model('models:/'+modelName+'/Staging')
-
-# COMMAND ----------
-
-mlflow.spark.load_model('models:/'+'als_model_4912847e91'+'/Production')
-
-# COMMAND ----------
-
-model = mlflow.spark.load_model('models:/'+modelName+'/Staging')
-
-# COMMAND ----------
-
-test_predictions = model.transform(test_df)
+test_predictions.show(5)
 
 # COMMAND ----------
 
 reg_eval = RegressionEvaluator(predictionCol="prediction", labelCol="buy_count", metricName="rmse")
-RMSE = reg_eval.evaluate(test_predictions)
+reg_eval.evaluate(test_predictions)
 
 # COMMAND ----------
 
-test_predictions.withColumn("prediction", test_predictions["prediction"].cast(IntegerType()))
-
-# COMMAND ----------
-
-test_predictions
-
-# COMMAND ----------
-
-def rd(df):
-    df
-
-# COMMAND ----------
-
-model
-
-# COMMAND ----------
-
-RMSE
-
-# COMMAND ----------
-
-test_predictions.show()
-
-# COMMAND ----------
-
-model = mlflow.spark.load_model('models:/'+'als_model_4912847e91'+'/Production')
-test_predictions_prod = model.transform(test_df)
-RMSE_prod = reg_eval.evaluate(test_predictions_prod)
-
-# COMMAND ----------
-
-RMSE_prod
-
-# COMMAND ----------
-
-client.transition_model_version_stage(name=modelName,version=model_versions[0],stage="Staging")
-
-# COMMAND ----------
-
-Utils.create_widgets()[0]
-
-# COMMAND ----------
-
-wallet_address = Utils.create_widgets()[0]
-dff = wallet_count_df.where(col("walletId") == wallet_address).select('new_walletId')
-
-# COMMAND ----------
-
-walletId = dff.head()[0]
+# MAGIC %md
+# MAGIC ## Recommendation
 
 # COMMAND ----------
 
@@ -463,19 +269,22 @@ def recommend(walletId: int)->(DataFrame,DataFrame):
 
 # COMMAND ----------
 
-walletId
-
-# COMMAND ----------
-
+modelName = "G06_Model"
+wallet_address = Utils.create_widgets()[0]
+dff = wallet_count_df.where(col("walletId") == wallet_address).select('new_walletId')
+walletId = dff.head()[0]
 a = recommend(walletId)
+top_5_recommend_token = a[1]
+top_5_recommend_token = top_5_recommend_token.select('symbol', 'name')
 
 # COMMAND ----------
 
-display(a[1])
+# MAGIC %md
+# MAGIC ### Top 5 token for wallet address: 0x000000cce580fb2b76b2d1196c237db199d82505
 
 # COMMAND ----------
 
-
+top_5_recommend_token.show()
 
 # COMMAND ----------
 

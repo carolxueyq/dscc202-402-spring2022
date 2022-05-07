@@ -17,8 +17,8 @@
 # COMMAND ----------
 
 # Grab the global variables
-wallet_address = Utils.create_widgets()
-print(wallet_address)
+wallet_address,start_date = Utils.create_widgets()
+print(wallet_address,start_date)
 
 # COMMAND ----------
 
@@ -29,35 +29,22 @@ print(wallet_address)
 
 from pyspark.sql.types import *
 from pyspark.sql import functions as F6
-
+from pyspark.sql.functions import col
 # Load the data from the lake
-wallet_count_df = spark.read.format('delta').load("/mnt/dscc202-datasets/misc/G06/tokenrec/wctables")
-tokens_df = spark.read.format('delta').load("/mnt/dscc202-datasets/misc/G06/tokenrec/tokentables")
+#wallet_balance_df = spark.read.format('delta').load("/mnt/dscc202-datasets/misc/G06/tokenrec/newtables/")
+wallet_count_df = spark.read.format('delta').load("/mnt/dscc202-datasets/misc/G06/tokenrec/wctables/")
+tokens_df = spark.read.format('delta').load("/mnt/dscc202-datasets/misc/G06/tokenrec/tokentables/")
+#unique_wallets = wallet_count_df.select('wallet_address').distinct().count()
+#unique_tokens = wallet_count_df.select('token_address').distinct().count()
+#print('Number of unique wallets: {0}'.format(unique_wallets))
+#print('Number of unique tokens: {0}'.format(unique_tokens))
+wallet_count_df.cache()
+tokens_df.cache()
 
 # COMMAND ----------
 
 from pyspark.sql import Window
-2
 from pyspark.sql.functions import dense_rank
-3
-wallet_count_df = wallet_count_df.withColumn("new_tokenId",dense_rank().over(Window.orderBy("token_address")))
-4
- 
-5
- 
-6
- 
-7
-wallet_count_df = wallet_count_df.withColumn("new_walletId",dense_rank().over(Window.orderBy("wallet_address")))
-8
- 
-9
-wallet_count_df = wallet_count_df.withColumnRenamed("token_address","tokenId")
-10
-wallet_count_df = wallet_count_df.withColumnRenamed("wallet_address","walletId")
-
-# COMMAND ----------
-
 from pyspark.sql import DataFrame
 from pyspark.sql.types import *
 from pyspark.sql import functions as F
@@ -75,92 +62,118 @@ from pyspark.ml.recommendation import ALS
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
 
-# COMMAND ----------
+wallet_count_df = wallet_count_df.withColumn("new_tokenId",dense_rank().over(Window.orderBy("token_address")))
+wallet_count_df = wallet_count_df.withColumn("new_walletId",dense_rank().over(Window.orderBy("wallet_address")))
+wallet_count_df = wallet_count_df.withColumnRenamed("token_address","tokenId")
+wallet_count_df = wallet_count_df.withColumnRenamed("wallet_address","walletId")
 
-modelName = "111"
-def mlflow_als(rank,maxIter,regParam):
-
-    with mlflow.start_run(run_name = modelName+"-run") as run:
-        seed = 42
-        (split_60_df, split_a_20_df, split_b_20_df) = wallet_count_df.randomSplit([0.6, 0.2, 0.2], seed = seed)
-        training_df = split_60_df.cache()
-        validation_df = split_a_20_df.cache()
-        test_df = split_b_20_df.cache()
-        input_schema = Schema([ColSpec("integer", "new_tokenId"),ColSpec("integer", "new_walletId")])
-        output_schema = Schema([ColSpec("double")])
-        signature = ModelSignature(inputs=input_schema, outputs=output_schema)
-    
-        # Create model
-        # Initialize our ALS learner
-        als = ALS(rank=rank, maxIter=maxIter, regParam=regParam,seed=42)
-        als.setItemCol("new_tokenId")\
-           .setRatingCol("buy_count")\
-           .setUserCol("new_walletId")\
-           .setColdStartStrategy("drop")
-        reg_eval = RegressionEvaluator(predictionCol="prediction", labelCol="buy_count", metricName="rmse")
-
-        alsModel = als.fit(training_df)
-        validation_metric = reg_eval.evaluate(alsModel.transform(validation_df))
-    
-        mlflow.log_metric('valid_' + reg_eval.getMetricName(), validation_metric) 
-    
-        runID = run.info.run_uuid
-        experimentID = run.info.experiment_id
-    
-        # Log model
-        mlflow.spark.log_model(spark_model=alsModel, signature = signature,artifact_path='als', registered_model_name=modelName)
-    return alsModel, validation_metric
+seed = 42
+(split_60_df, split_a_20_df, split_b_20_df) = wallet_count_df.randomSplit([0.6, 0.2, 0.2], seed = seed)
+training_df = split_60_df.cache()
+validation_df = split_a_20_df.cache()
+test_df = split_b_20_df.cache()
+validation_df = validation_df.withColumn("buy_count", validation_df["buy_count"].cast(DoubleType()))
+test_df = test_df.withColumn("buy_count", test_df["buy_count"].cast(DoubleType()))
 
 # COMMAND ----------
 
-mlflow_als(rank = 5,maxIter = 5, regParam = 0.6)
+from pyspark.sql import functions as F
+wallet_address = Utils.create_widgets()[0]
+dff = wallet_count_df.where(col("walletId") == wallet_address).select('new_walletId')
+assert dff.count()>0, "No such user"
+walletId = dff.collect()[0]['new_walletId']
 
 # COMMAND ----------
 
-client = MlflowClient()
-model_versions = []
-    
-for mv in client.search_model_versions(f"name='{modelName}'"):
-    model_versions.append(dict(mv)['version'])
-    if dict(mv)['current_stage'] == 'Staging':
-        print("Archiving: {}".format(dict(mv)))
-        # Archive the currently staged model
-        client.transition_model_version_stage(
-            name= modelName,
-            version=dict(mv)['version'],
-            stage="Archived"
-        )
 
-# COMMAND ----------
-
-client.transition_model_version_stage(name=modelName,version=model_versions[0],stage="Staging")
-
-# COMMAND ----------
-
-wallet_address = Utils.create_widgets()
-walletId = wallet_count_df.where(col("walletId") == wallet_address).select(new_walletId)
-
-def recommend(walletId: int)->(DataFrame,DataFrame):
-    bought_token = wallet_count_df.filter(wallet_count_df.walletId == walletId).join(tokens_df, 'address').select('new_tokenId', 'symbol', 'name','buy_count')
+def recommend(walletId,model):
+    assert str(type(model))=="<class 'pyspark.ml.pipeline.PipelineModel'>"
+    bought_token = wallet_count_df.filter(wallet_count_df.new_walletId == walletId).join(tokens_df, wallet_count_df.tokenId == tokens_df.address).select('new_tokenId', 'symbol', 'name','buy_count','tokenId')
     unbought_token = wallet_count_df.filter(~ wallet_count_df['new_tokenId'].isin([token['new_tokenId'] for token in bought_token.collect()])).select('new_tokenId').withColumn('new_walletId', F.lit(walletId)).distinct()
  
-    model = mlflow.spark.load_model('models:/'+modelName+'/Staging')
+    
     predicted_buy_counts = model.transform(unbought_token)
  
-    return (bought_token.select('symbol','name','buy_count').orderBy('buy_count', ascending = False), predicted_buy_counts.join(wallet_count_df, 'new_tokenId') \
-                .join(tokens_df, 'address') \
-                .select('symbol', 'name', 'prediction') \
+    return (bought_token.select('symbol','name','buy_count','tokenId').orderBy('buy_count', ascending = False), predicted_buy_counts.join(wallet_count_df, 'new_tokenId') \
+                .join(tokens_df, wallet_count_df.tokenId == tokens_df.address) \
+                .select('symbol', 'name', 'prediction','tokenId') \
                 .distinct() \
                 .orderBy('prediction', ascending = False)
                 .limit(5))
 
 # COMMAND ----------
 
+client = MlflowClient()
 
+for mdl in client.search_registered_models():
+    model_name=dict(mdl)['name']
+    for mv in client.search_model_versions(f"name='{model_name}'"):
+        if dict(mv)['current_stage']=='Production':
+            modelName=dict(mv)['name']
+            
+product_model = mlflow.spark.load_model('models:/'+modelName+'/Production')
 
 # COMMAND ----------
 
+product_1,product_5= recommend(walletId,product_model)
 
+# COMMAND ----------
+
+product_5 = product_5.withColumn("prediction", F.round(col("prediction"),0))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Get Recommendation with LINK to etherscan.io
+
+# COMMAND ----------
+
+result=product_5.withColumn('website', F.lit('https://etherscan.io/address/')).select("symbol","name","prediction",concat(col("website"), col("tokenId")).alias('link'))
+result.display()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Show Recommendation UI
+
+# COMMAND ----------
+
+head=f"""
+<html>
+<head>
+<meta charset="utf-8">
+<title>Token Recommendation(runoob.com)</title>
+</head>
+<body>
+    <h1>Recommend tokens for user address:</h1>
+    <p>{wallet_address}</p>
+    <table boder="0"cellspacing="5" cellpadding="10" bgcolor="gold" class="tabtop13" style="width:50%" >
+  <tr>
+    <tr>
+        <th style="width:30%">Name</th>
+        <th style="width:30%">Symbol</th>
+        <th style="width:30%">Link</th>
+    </tr>
+    """
+end=f"""
+</table>
+</body>
+</html>
+"""
+htmltext=head
+for c in result.collect():
+    tr=f"""
+    <tr>
+        <td style="text-align:center">{c['name']}</td>
+        <td style="text-align:center">{c['symbol']}</td>
+        <td style="text-align:center"><a href="{c['link']}">link</a> </td>
+    </tr>
+    """
+    htmltext+=tr
+
+# COMMAND ----------
+
+displayHTML(htmltext)
 
 # COMMAND ----------
 
